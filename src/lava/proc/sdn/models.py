@@ -11,7 +11,7 @@ from lava.magma.core.model.py.type import LavaPyType
 from lava.magma.core.resources import CPU
 from lava.magma.core.decorator import implements, requires, tag
 from lava.magma.core.model.py.model import PyLoihiProcessModel
-from lava.proc.sdn.process import Sigma, Delta, SigmaDelta, ActivationMode
+from lava.proc.sdn.process import Sigma, Delta, DeltaReset, SigmaDelta, SigmaDeltaReset, ActivationMode
 
 
 def ReLU(x: np.ndarray) -> np.ndarray:
@@ -201,6 +201,39 @@ class PyDeltaModelFloat(AbstractDeltaModel):
         self.act = a_in_data
         self.s_out.send(s_out)
 
+@implements(proc=DeltaReset, protocol=LoihiProtocol)
+@requires(CPU)
+@tag('floating_pt')
+class PyDeltaResetModelFloat(AbstractDeltaModel):
+    """Floating point implementation of Delta encoding."""
+    a_in = LavaPyType(PyInPort.VEC_DENSE, float)
+    s_out = LavaPyType(PyOutPort.VEC_DENSE, float)
+
+    vth: np.ndarray = LavaPyType(np.ndarray, float)
+    sigma: np.ndarray = LavaPyType(np.ndarray, float)
+    act: np.ndarray = LavaPyType(np.ndarray, float)
+    residue: np.ndarray = LavaPyType(np.ndarray, float)
+    error: np.ndarray = LavaPyType(np.ndarray, float)
+
+    spike_exp: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=3)
+    state_exp: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=3)
+    cum_error: np.ndarray = LavaPyType(np.ndarray, bool, precision=1)
+
+    def __init__(self, proc_params: Dict[str, Any]) -> None:
+        super(PyDeltaResetModelFloat, self).__init__(proc_params)
+        self.reset_interval = proc_params["reset_interval"]
+        self.reset_offset = (proc_params["reset_offset"]) % self.reset_interval
+
+    def run_spk(self) -> None:
+        # Receive synaptic input
+        a_in_data = self.a_in.recv()
+        if (self.time_step % self.reset_interval) == self.reset_offset:
+            pass
+
+        s_out = self.delta_dynamics(a_in_data)
+        self.act = a_in_data
+        self.s_out.send(s_out)
+
 
 @implements(proc=Delta, protocol=LoihiProtocol)
 @requires(CPU)
@@ -225,6 +258,42 @@ class PyDeltaModelFixed(AbstractDeltaModel):
         a_in_data = np.left_shift(
             self.a_in.recv(), self.spike_exp + self.state_exp
         )
+        s_out_scaled = self.delta_dynamics(a_in_data)
+        s_out = np.right_shift(s_out_scaled, self.state_exp)
+        self.act = a_in_data
+        self.s_out.send(s_out)
+
+@implements(proc=DeltaReset, protocol=LoihiProtocol)
+@requires(CPU)
+@tag('fixed_pt')
+class PyDeltaResetModelFixed(AbstractDeltaModel):
+    """Fixed point implementation of Delta encoding."""
+    a_in = LavaPyType(PyInPort.VEC_DENSE, np.int32, precision=24)
+    s_out = LavaPyType(PyOutPort.VEC_DENSE, np.int32, precision=24)
+
+    vth: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    sigma: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    act: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    residue: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    error: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+
+    spike_exp: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=3)
+    state_exp: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=3)
+    cum_error: np.ndarray = LavaPyType(np.ndarray, bool, precision=1)
+
+    def __init__(self, proc_params: Dict[str, Any]) -> None:
+        super(PyDeltaResetModelFixed, self).__init__(proc_params)
+        self.reset_interval = proc_params["reset_interval"]
+        self.reset_offset = (proc_params["reset_offset"]) % self.reset_interval
+
+    def run_spk(self) -> None:
+        # Receive synaptic input
+        a_in_data = np.left_shift(
+            self.a_in.recv(), self.spike_exp + self.state_exp
+        )
+        if (self.time_step % self.reset_interval) == self.reset_offset:
+            pass
+            
         s_out_scaled = self.delta_dynamics(a_in_data)
         s_out = np.right_shift(s_out_scaled, self.state_exp)
         self.act = a_in_data
@@ -279,6 +348,77 @@ class PySigmaDeltaModelFixed(AbstractSigmaDeltaModel):
     def run_spk(self) -> None:
         # Receive synaptic input
         a_in_data = self.a_in.recv()
+        s_out_scaled = self.dynamics(a_in_data)
+        s_out = np.right_shift(s_out_scaled, self.state_exp)
+        self.s_out.send(s_out)
+
+
+@implements(proc=SigmaDeltaReset, protocol=LoihiProtocol)
+@requires(CPU)
+@tag('floating_pt')
+class PySigmaDeltaResetModelFloat(AbstractSigmaDeltaModel):
+    """Floating point implementation of Sigma Delta neuron."""
+    a_in = LavaPyType(PyInPort.VEC_DENSE, float)
+    s_out = LavaPyType(PyOutPort.VEC_DENSE, float)
+
+    vth: np.ndarray = LavaPyType(np.ndarray, float)
+    sigma: np.ndarray = LavaPyType(np.ndarray, float)
+    act: np.ndarray = LavaPyType(np.ndarray, float)
+    residue: np.ndarray = LavaPyType(np.ndarray, float)
+    error: np.ndarray = LavaPyType(np.ndarray, float)
+    bias: np.ndarray = LavaPyType(np.ndarray, float)
+
+    spike_exp: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=3)
+    state_exp: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=3)
+    cum_error: np.ndarray = LavaPyType(np.ndarray, bool, precision=1)
+
+    def __init__(self, proc_params: Dict[str, Any]) -> None:
+        super(PySigmaDeltaResetModelFloat, self).__init__(proc_params)
+        self.reset_interval = proc_params["reset_interval"]
+        self.reset_offset = (proc_params["reset_offset"]) % self.reset_interval
+
+    def run_spk(self) -> None:
+        # Receive synaptic input
+        a_in_data = self.a_in.recv()
+
+        if (self.time_step % self.reset_interval) == self.reset_offset:
+            self.act *= 0
+
+        s_out = self.dynamics(a_in_data)
+        self.s_out.send(s_out)
+
+
+@implements(proc=SigmaDeltaReset, protocol=LoihiProtocol)
+@requires(CPU)
+@tag('fixed_pt')
+class PySigmaDeltaResetModelFixed(AbstractSigmaDeltaModel):
+    """Fixed point implementation of Sigma Delta neuron."""
+    a_in = LavaPyType(PyInPort.VEC_DENSE, np.int32, precision=24)
+    s_out = LavaPyType(PyOutPort.VEC_DENSE, np.int32, precision=24)
+
+    vth: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    sigma: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    act: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    residue: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    error: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=24)
+    bias: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=16)
+
+    spike_exp: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=3)
+    state_exp: np.ndarray = LavaPyType(np.ndarray, np.int32, precision=3)
+    cum_error: np.ndarray = LavaPyType(np.ndarray, bool, precision=1)
+
+    def __init__(self, proc_params: Dict[str, Any]) -> None:
+        super(PySigmaDeltaResetModelFixed, self).__init__(proc_params)
+        self.reset_interval = proc_params["reset_interval"]
+        self.reset_offset = (proc_params["reset_offset"]) % self.reset_interval
+
+    def run_spk(self) -> None:
+        # Receive synaptic input
+        a_in_data = self.a_in.recv()
+
+        if (self.time_step % self.reset_interval) == self.reset_offset:
+            self.act *= 0
+
         s_out_scaled = self.dynamics(a_in_data)
         s_out = np.right_shift(s_out_scaled, self.state_exp)
         self.s_out.send(s_out)
